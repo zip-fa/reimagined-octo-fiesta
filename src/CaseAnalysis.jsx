@@ -1,7 +1,7 @@
-// src/routes/CaseAnalysis.jsx
-import React, { useState, useCallback } from 'react';
+import React, {useState, useCallback, useMemo} from 'react';
 import _ from 'lodash';
-import {Link} from "react-router-dom";
+import { Link } from "react-router-dom";
+import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 
 const calculateRTP = (items, casePrice) => {
     let totalProbability = 0;
@@ -18,62 +18,124 @@ const calculateRTP = (items, casePrice) => {
     return (expectedValue / (casePrice || 1)) * 100;
 };
 
-const determineRiskType = (items) => {
-    const probabilities = items.flatMap(item =>
-        item.steam_items.map(si => ({
-            price: si.steam_price,
-            probability: si.probability
-        }))
-    );
-
-    const highValueProb = probabilities
-        .filter(p => p.price > 5000)
-        .reduce((sum, p) => sum + p.probability, 0);
-
-    const lowValueProb = probabilities
-        .filter(p => p.price < 500)
-        .reduce((sum, p) => sum + p.probability, 0);
-
-    if (highValueProb < 0.001 && lowValueProb < 0.5) return "low risk";
-    if (highValueProb > 0.001 && lowValueProb > 0.7) return "high risk";
-    return "medium risk";
+const determineRiskType = (maxLootToPriceRatio) => {
+    if (maxLootToPriceRatio <= 10) return "Minimal";
+    if (maxLootToPriceRatio <= 50) return "Moderate";
+    if (maxLootToPriceRatio <= 100) return "Balanced";
+    if (maxLootToPriceRatio <= 200) return "Elevated";
+    return "Significant";
 };
 
 const SITE_PROCESSORS = {
+    'g4skins': {
+        name: 'G4Skins',
+        processData: (data) => {
+            const items = data.result.items.map(item => ({
+                steam_items: [{
+                    steam_price: item.value * 100, // Convert to cents
+                    probability: (item.rangeTo - item.rangeFrom + 1) / 100000 // Convert range to probability
+                }]
+            }));
+
+            const price = data.result.price;
+            const maxPrice = Math.max(...items.flatMap(item =>
+                item.steam_items.map(si => si.steam_price)
+            )) / 100;
+            const maxLootToPriceRatio = maxPrice / price;
+
+            return {
+                name: data.result.name,
+                price: price,
+                items: items,
+                rtp: calculateRTP(items, price),
+                minPrice: Math.min(...items.flatMap(item =>
+                    item.steam_items.map(si => si.steam_price)
+                )) / 100,
+                maxPrice: maxPrice,
+                maxLootToPriceRatio: maxLootToPriceRatio,
+                riskType: determineRiskType(maxLootToPriceRatio)
+            };
+        }
+    },
+    'skinclub': {
+        name: 'Skin Club',
+        processData: (data) => {
+            const items = data.data.last_successful_generation.contents.map(content => ({
+                steam_items: [{
+                    steam_price: content.item.price,
+                    probability: parseFloat(content.chance_percent) / 100 // Convert percentage to decimal
+                }]
+            }));
+
+            const price = data.data.price / 100;
+            const maxPrice = Math.max(...items.flatMap(item =>
+                item.steam_items.map(si => si.steam_price)
+            )) / 100;
+            const maxLootToPriceRatio = maxPrice / price;
+
+            return {
+                name: data.data.title,
+                price: price,
+                items: items,
+                rtp: calculateRTP(items, price),
+                minPrice: Math.min(...items.flatMap(item =>
+                    item.steam_items.map(si => si.steam_price)
+                )) / 100,
+                maxPrice: maxPrice,
+                maxLootToPriceRatio: maxLootToPriceRatio,
+                riskType: determineRiskType(maxLootToPriceRatio)
+            };
+        }
+    },
     'ggdrop': {
         name: 'GGDrop',
-        processData: (data) => ({
-            name: data.data.title_en,
-            price: data.data.price / 104.5,
-            items: data.data.items,
-            rtp: calculateRTP(data.data.items, data.data.price / 104.5),
-            minPrice: Math.min(...data.data.items.flatMap(item =>
+        processData: (data) => {
+            const maxPrice = Math.max(...data.data.items.flatMap(item =>
                 item.steam_items.map(si => si.steam_price)
-            )) / 100,
-            maxPrice: Math.max(...data.data.items.flatMap(item =>
-                item.steam_items.map(si => si.steam_price)
-            )) / 100,
-            riskType: determineRiskType(data.data.items)
-        })
+            )) / 100;
+            const price = data.data.price / 104.5;
+            const maxLootToPriceRatio = maxPrice / price;
+
+            return {
+                name: data.data.title_en,
+                price: price,
+                items: data.data.items,
+                rtp: calculateRTP(data.data.items, price),
+                minPrice: Math.min(...data.data.items.flatMap(item =>
+                    item.steam_items.map(si => si.steam_price)
+                )) / 100,
+                maxPrice: maxPrice,
+                maxLootToPriceRatio: maxLootToPriceRatio,
+                riskType: determineRiskType(maxLootToPriceRatio)
+            };
+        }
     },
     'hellcase': {
         name: 'HellCase',
         processData: (data) => {
             const items = data.itemlist.map(item => ({
                 steam_items: item.items.map(subItem => ({
-                    steam_price: subItem.steam_price_en, // Convert to cents
-                    probability: subItem.odds // Use odds for probability
+                    steam_price: subItem.steam_price_en,
+                    probability: subItem.odds
                 }))
             }));
+
+            const maxPrice = Math.max(...items.flatMap(item =>
+                item.steam_items.map(si => si.steam_price)
+            ));
+            const maxLootToPriceRatio = maxPrice / data.case_price;
 
             return {
                 name: data.casename,
                 price: data.case_price,
                 items: items,
                 rtp: calculateRTP(items, data.case_price),
-                minPrice: Math.min(...items.flatMap(item => item.steam_items.map(si => si.steam_price))),
-                maxPrice: Math.max(...items.flatMap(item => item.steam_items.map(si => si.steam_price))),
-                riskType: determineRiskType(items)
+                minPrice: Math.min(...items.flatMap(item =>
+                    item.steam_items.map(si => si.steam_price)
+                )),
+                maxPrice: maxPrice,
+                maxLootToPriceRatio: maxLootToPriceRatio,
+                riskType: determineRiskType(maxLootToPriceRatio)
             };
         }
     }
@@ -154,6 +216,49 @@ const CaseAnalysis = () => {
         setActiveSite(null);
     };
 
+    const siteStats = useMemo(() => {
+        const stats = {};
+
+        Object.entries(caseAnalysis).forEach(([site, cases]) => {
+            const casesArray = Object.values(cases);
+
+            // Calculate average RTP
+            const avgRtp = _.meanBy(casesArray, 'rtp');
+
+            // Count risk levels
+            const riskCounts = _.countBy(casesArray, 'riskType');
+
+            stats[site] = {
+                avgRtp,
+                riskCounts,
+                totalCases: casesArray.length
+            };
+        });
+
+        return stats;
+    }, [caseAnalysis]);
+
+    // Prepare data for RTP chart
+    const rtpChartData = useMemo(() => {
+        return Object.entries(siteStats).map(([site, stats]) => ({
+            site: SITE_PROCESSORS[site].name,
+            RTP: Number(stats.avgRtp.toFixed(2))
+        }));
+    }, [siteStats]);
+
+    // Prepare data for risk levels chart
+    const riskChartData = useMemo(() => {
+        const allRiskLevels = ['Minimal', 'Moderate', 'Balanced', 'Elevated', 'Significant'];
+
+        return Object.entries(siteStats).map(([site, stats]) => ({
+            site: SITE_PROCESSORS[site].name,
+            ...allRiskLevels.reduce((acc, level) => ({
+                ...acc,
+                [level]: stats.riskCounts[level] || 0
+            }), {})
+        }));
+    }, [siteStats]);
+
     return (
         <div className="container mx-auto px-4 py-8">
             <h1 className="text-3xl font-bold mb-8 text-center">Case Analysis</h1>
@@ -161,7 +266,7 @@ const CaseAnalysis = () => {
             <nav className="my-4">
                 <Link
                     to="/"
-                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-4"
                 >
                     Home
                 </Link>
@@ -221,6 +326,43 @@ const CaseAnalysis = () => {
 
             {Object.keys(caseAnalysis).length > 0 && (
                 <div className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-semibold mb-4">Average RTP by Site</h2>
+                            <div className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={rtpChartData}>
+                                        <CartesianGrid strokeDasharray="3 3"/>
+                                        <XAxis dataKey="site"/>
+                                        <YAxis domain={[0, 100]}/>
+                                        <Tooltip formatter={(value) => `${value}%`}/>
+                                        <Bar dataKey="RTP" fill="#3b82f6"/>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-semibold mb-4">Risk Level Distribution by Site</h2>
+                            <div className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={riskChartData}>
+                                        <CartesianGrid strokeDasharray="3 3"/>
+                                        <XAxis dataKey="site"/>
+                                        <YAxis/>
+                                        <Tooltip/>
+                                        <Legend/>
+                                        <Bar dataKey="Minimal" stackId="a" fill="#22c55e"/>
+                                        <Bar dataKey="Moderate" stackId="a" fill="#3b82f6"/>
+                                        <Bar dataKey="Balanced" stackId="a" fill="#eab308"/>
+                                        <Bar dataKey="Elevated" stackId="a" fill="#f97316"/>
+                                        <Bar dataKey="Significant" stackId="a" fill="#ef4444"/>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="mb-4 border-b">
                         <div className="flex">
                             {Object.entries(caseAnalysis).map(([site, cases]) => (
@@ -244,43 +386,47 @@ const CaseAnalysis = () => {
                             <table className="w-full">
                                 <thead>
                                 <tr className="border-b bg-gray-50">
-                                    <th className="p-2 text-left">Case Name</th>
-                                    <th className="p-2 text-left">Price ($)</th>
-                                    <th className="p-2 text-left">RTP (%)</th>
-                                    <th className="p-2 text-left">Min Price ($)</th>
-                                    <th className="p-2 text-left">Max Price ($)</th>
-                                    <th className="p-2 text-left">Risk Type</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                {Object.entries(caseAnalysis[activeSite])
-                                    .sort(([, a], [, b]) => b.price - a.price)
-                                    .map(([filename, caseData]) => (
-                                        <tr key={filename} className="border-b">
-                                            <td className="p-2">{caseData.name}</td>
-                                            <td className="p-2">{caseData.price.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.rtp.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
-                                            <td className="p-2">
-                                                    <span className={`px-2 py-1 rounded-full text-xs ${
-                                                        caseData.riskType === 'low risk' ? 'bg-green-100 text-green-800' :
-                                                            caseData.riskType === 'medium risk' ? 'bg-yellow-100 text-yellow-800' :
-                                                                'bg-red-100 text-red-800'
-                                                    }`}>
-                                                        {caseData.riskType}
-                                                    </span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                <th className="p-2 text-left">Case Name</th>
+                                        <th className="p-2 text-left">Price ($)</th>
+                                        <th className="p-2 text-left">RTP (%)</th>
+                                        <th className="p-2 text-left">Min Price ($)</th>
+                                        <th className="p-2 text-left">Max Price ($)</th>
+                                        <th className="p-2 text-left">Max/Price Ratio</th>
+                                        <th className="p-2 text-left">Risk Level</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {Object.entries(caseAnalysis[activeSite])
+                                        .sort(([, a], [, b]) => b.price - a.price)
+                                        .map(([filename, caseData]) => (
+                                            <tr key={filename} className="border-b">
+                                                <td className="p-2">{caseData.name}</td>
+                                                <td className="p-2">{caseData.price.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.rtp.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.maxLootToPriceRatio.toFixed(2)}x</td>
+                                                <td className="p-2">
+                                                <span className={`px-2 py-1 rounded-full text-xs ${
+                                                    caseData.riskType === 'Minimal' ? 'bg-green-100 text-green-800' :
+                                                        caseData.riskType === 'Moderate' ? 'bg-blue-100 text-blue-800' :
+                                                            caseData.riskType === 'Balanced' ? 'bg-yellow-100 text-yellow-800' :
+                                                                caseData.riskType === 'Elevated' ? 'bg-orange-100 text-orange-800' :
+                                                                    'bg-red-100 text-red-800'
+                                                }`}>
+                                                    {caseData.riskType}
+                                                </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
                     )}
                 </div>
-            )}
-        </div>
-    );
-};
+            );
+            };
 
-export default CaseAnalysis;
+            export default CaseAnalysis;
