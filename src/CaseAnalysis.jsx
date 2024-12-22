@@ -3,6 +3,44 @@ import _ from 'lodash';
 import { Link } from "react-router-dom";
 import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 
+// Add this export function after the determineRiskType function
+const exportSiteData = (siteName, cases) => {
+    // Define CSV headers
+    const headers = ['Case Name', 'Price ($)', 'RTP (%)', 'Min Price ($)', 'Max Price ($)', 'Max/Price Ratio', 'Risk Level'];
+
+    // Convert cases data to CSV rows
+    const rows = Object.values(cases).map(caseData => [
+        caseData.name,
+        caseData.price.toFixed(2),
+        caseData.rtp.toFixed(2),
+        caseData.minPrice.toFixed(2),
+        caseData.maxPrice.toFixed(2),
+        caseData.maxLootToPriceRatio.toFixed(2),
+        caseData.riskType
+    ]);
+
+    // Combine headers and rows
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${siteName}-parsed.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+};
+
+// Add this export all function
+const exportAllSites = (caseAnalysis) => {
+    Object.entries(caseAnalysis).forEach(([site, cases]) => {
+        exportSiteData(site, cases);
+    });
+};
+
 const calculateRTP = (items, casePrice) => {
     let totalProbability = 0;
     let expectedValue = 0;
@@ -326,6 +364,28 @@ const CaseAnalysis = () => {
 
             {Object.keys(caseAnalysis).length > 0 && (
                 <div className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="flex justify-end mb-6">
+                        <button
+                            onClick={() => exportAllSites(caseAnalysis)}
+                            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center"
+                        >
+                            <svg
+                                className="w-4 h-4 mr-2"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                            </svg>
+                            Export All Data
+                        </button>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         <div className="bg-white rounded-lg shadow-lg p-6">
                             <h2 className="text-xl font-semibold mb-4">Average RTP by Site</h2>
@@ -386,27 +446,27 @@ const CaseAnalysis = () => {
                             <table className="w-full">
                                 <thead>
                                 <tr className="border-b bg-gray-50">
-                                <th className="p-2 text-left">Case Name</th>
-                                        <th className="p-2 text-left">Price ($)</th>
-                                        <th className="p-2 text-left">RTP (%)</th>
-                                        <th className="p-2 text-left">Min Price ($)</th>
-                                        <th className="p-2 text-left">Max Price ($)</th>
-                                        <th className="p-2 text-left">Max/Price Ratio</th>
-                                        <th className="p-2 text-left">Risk Level</th>
-                                    </tr>
-                                    </thead>
-                                    <tbody>
-                                    {Object.entries(caseAnalysis[activeSite])
-                                        .sort(([, a], [, b]) => b.price - a.price)
-                                        .map(([filename, caseData]) => (
-                                            <tr key={filename} className="border-b">
-                                                <td className="p-2">{caseData.name}</td>
-                                                <td className="p-2">{caseData.price.toFixed(2)}</td>
-                                                <td className="p-2">{caseData.rtp.toFixed(2)}</td>
-                                                <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
-                                                <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
-                                                <td className="p-2">{caseData.maxLootToPriceRatio.toFixed(2)}x</td>
-                                                <td className="p-2">
+                                    <th className="p-2 text-left">Case Name</th>
+                                    <th className="p-2 text-left">Price ($)</th>
+                                    <th className="p-2 text-left">RTP (%)</th>
+                                    <th className="p-2 text-left">Min Price ($)</th>
+                                    <th className="p-2 text-left">Max Price ($)</th>
+                                    <th className="p-2 text-left">Max/Price Ratio</th>
+                                    <th className="p-2 text-left">Risk Level</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {Object.entries(caseAnalysis[activeSite])
+                                    .sort(([, a], [, b]) => b.price - a.price)
+                                    .map(([filename, caseData]) => (
+                                        <tr key={filename} className="border-b">
+                                            <td className="p-2">{caseData.name}</td>
+                                            <td className="p-2">{caseData.price.toFixed(2)}</td>
+                                            <td className="p-2">{caseData.rtp.toFixed(2)}</td>
+                                            <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
+                                            <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
+                                            <td className="p-2">{caseData.maxLootToPriceRatio.toFixed(2)}x</td>
+                                            <td className="p-2">
                                                 <span className={`px-2 py-1 rounded-full text-xs ${
                                                     caseData.riskType === 'Minimal' ? 'bg-green-100 text-green-800' :
                                                         caseData.riskType === 'Moderate' ? 'bg-blue-100 text-blue-800' :
@@ -416,17 +476,17 @@ const CaseAnalysis = () => {
                                                 }`}>
                                                     {caseData.riskType}
                                                 </span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     )}
                 </div>
-            );
-            };
+            )}
+        </div>
+    );
+};
 
-            export default CaseAnalysis;
+export default CaseAnalysis;
