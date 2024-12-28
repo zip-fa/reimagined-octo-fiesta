@@ -12,11 +12,12 @@ const seededRandom = (function() {
     };
 })();
 
-function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = false) {
+// Original function without modifications
+function generateItemsOriginal(casePrice, rtp, minPrice, maxPrice, count) {
     const targetEV = casePrice * (rtp / 100);
     const items = [];
 
-    const cheaperCount = useImproved ? Math.floor(count * 0.4) : Math.floor(count / 2);
+    const cheaperCount = Math.floor(count / 2);
     const expensiveCount = count - cheaperCount;
 
     for (let i = 0; i < cheaperCount; i++) {
@@ -34,13 +35,85 @@ function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = 
 
     for (let iter = 0; iter < 100; iter++) {
         const mid = (low + high) / 2;
+        const weights = items.map(it => it.price ** mid);
+        const sumWeights = weights.reduce((a, b) => a + b, 0);
+        const probs = weights.map(w => w / sumWeights);
+        const ev = items.reduce((acc, it, i) => acc + it.price * probs[i], 0);
+
+        if (ev > targetEV) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+
+    const a = (low + high) / 2;
+    const finalWeights = items.map(it => it.price ** a);
+    const sumFinalWeights = finalWeights.reduce((a, b) => a + b, 0);
+    const finalProbs = finalWeights.map(w => w / sumFinalWeights);
+
+    for (let i = 0; i < count; i++) {
+        items[i].chance = parseFloat((finalProbs[i] * 100).toFixed(3));
+    }
+
+    return items.sort((a, b) => b.price - a.price);
+}
+
+// New function with improved distribution
+function generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count) {
+    const targetEV = casePrice * (rtp / 100);
+    const items = [];
+
+    const distribution = {
+        lowTier: Math.floor(count * 0.3),
+        midTier: Math.floor(count * 0.2),
+        highTier: Math.floor(count * 0.3),
+        premiumTier: Math.floor(count * 0.15)
+    };
+    distribution.exoticTier = count - Object.values(distribution).reduce((a,b) => a+b, 0);
+
+    for (let i = 0; i < distribution.lowTier; i++) {
+        const maxTierPrice = casePrice * 0.5;
+        const price = parseFloat((seededRandom() * (maxTierPrice - minPrice) + minPrice).toFixed(2));
+        items.push({ price });
+    }
+
+    for (let i = 0; i < distribution.midTier; i++) {
+        const minTierPrice = casePrice * 0.5;
+        const maxTierPrice = casePrice * 0.99;
+        const price = parseFloat((seededRandom() * (maxTierPrice - minTierPrice) + minTierPrice).toFixed(2));
+        items.push({ price });
+    }
+
+    for (let i = 0; i < distribution.highTier; i++) {
+        const minTierPrice = casePrice;
+        const maxTierPrice = casePrice * 5;
+        const price = parseFloat((seededRandom() * (maxTierPrice - minTierPrice) + minTierPrice).toFixed(2));
+        items.push({ price });
+    }
+
+    for (let i = 0; i < distribution.premiumTier; i++) {
+        const minTierPrice = casePrice * 5;
+        const maxTierPrice = casePrice * 10;
+        const price = parseFloat((seededRandom() * (maxTierPrice - minTierPrice) + minTierPrice).toFixed(2));
+        items.push({ price });
+    }
+
+    for (let i = 0; i < distribution.exoticTier; i++) {
+        const minTierPrice = casePrice * 10;
+        const price = parseFloat((seededRandom() * (maxPrice - minTierPrice) + minTierPrice).toFixed(2));
+        items.push({ price });
+    }
+
+    let low = -10;
+    let high = 10;
+
+    for (let iter = 0; iter < 100; iter++) {
+        const mid = (low + high) / 2;
         const weights = items.map(it => {
-            if (useImproved) {
-                const priceRatio = it.price / casePrice;
-                const boost = priceRatio > 1 ? 1.5 : 1;
-                return (it.price ** mid) * boost;
-            }
-            return it.price ** mid;
+            const priceRatio = it.price / casePrice;
+            const boost = priceRatio > 1 ? 1.5 : 1;
+            return (it.price ** mid) * boost;
         });
 
         const sumWeights = weights.reduce((a, b) => a + b, 0);
@@ -56,12 +129,9 @@ function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = 
 
     const a = (low + high) / 2;
     const finalWeights = items.map(it => {
-        if (useImproved) {
-            const priceRatio = it.price / casePrice;
-            const boost = priceRatio > 1 ? 1.5 : 1;
-            return (it.price ** a) * boost;
-        }
-        return it.price ** a;
+        const priceRatio = it.price / casePrice;
+        const boost = priceRatio > 1 ? 1.5 : 1;
+        return (it.price ** a) * boost;
     });
 
     const sumFinalWeights = finalWeights.reduce((a, b) => a + b, 0);
@@ -74,6 +144,11 @@ function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = 
     return items.sort((a, b) => b.price - a.price);
 }
 
+function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = false) {
+    return useImproved
+        ? generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count)
+        : generateItemsOriginal(casePrice, rtp, minPrice, maxPrice, count);
+}
 function calculateDistribution(items, casePrice) {
     const thresholds = {
         lowTier: 0.5,
