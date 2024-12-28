@@ -74,7 +74,7 @@ const SITE_PROCESSORS = {
                 .map(item => ({
                     steam_items: [{
                         steam_price: item.price * 100, // Convert to cents
-                        probability: parseFloat(item.chance)
+                        probability: parseFloat(item.chance) / 100
                     }]
                 }));
 
@@ -88,7 +88,7 @@ const SITE_PROCESSORS = {
                 name: data.data.crate.title,
                 price: Number(price),
                 items: items,
-                rtp: calculateRTP(items, price) / 100,
+                rtp: calculateRTP(items, price),
                 minPrice: Math.min(...items.flatMap(item =>
                     item.steam_items.map(si => si.steam_price)
                 )) / 100,
@@ -277,10 +277,10 @@ const CaseAnalysis = () => {
 
         // Convert items to rows
         const rows = items.flatMap(item =>
-            item.steam_items.map(si => [
-                si.name || 'Unknown',
+            item.steam_items.map((si, idx) => [
+                si.name || `Item #${idx}`,
                 (si.steam_price / 100).toFixed(2),
-                (si.probability).toFixed(4)
+                (si.probability * 100).toFixed(4)
             ])
         );
 
