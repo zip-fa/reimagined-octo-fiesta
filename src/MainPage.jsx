@@ -218,6 +218,13 @@ const MainPage = () => {
                 >
                     Case Analysis
                 </Link>
+
+                <Link
+                    to="/rtp-generator"
+                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                    RTP Generator
+                </Link>
             </nav>
 
             {/* Drag and Drop Area */}
