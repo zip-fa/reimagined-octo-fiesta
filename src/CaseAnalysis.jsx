@@ -1,7 +1,8 @@
 import React, {useState, useCallback, useMemo, useEffect} from 'react';
 import _ from 'lodash';
 import { Link } from "react-router-dom";
-import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
+import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell} from "recharts";
+
 import {Slider} from "./components/slider.jsx";
 
 // Add this export function after the determineRiskType function
@@ -179,13 +180,13 @@ const SITE_PROCESSORS = {
         processData: (data) => {
             const items = data.itemlist.map(item => ({
                 steam_items: item.items.map(subItem => ({
-                    steam_price: subItem.steam_price_en,
+                    steam_price: subItem.steam_price_en * 100, // convert to cents
                     probability: subItem.odds
                 }))
             }));
 
             const maxPrice = Math.max(...items.flatMap(item =>
-                item.steam_items.map(si => si.steam_price)
+                item.steam_items.map(si => si.steam_price / 100)
             ));
             const maxLootToPriceRatio = maxPrice / data.case_price;
 
@@ -193,7 +194,7 @@ const SITE_PROCESSORS = {
                 name: data.casename,
                 price: data.case_price,
                 items: items,
-                rtp: calculateRTP(items, data.case_price),
+                rtp: calculateRTP(items, data.case_price * 100),
                 minPrice: Math.min(...items.flatMap(item =>
                     item.steam_items.map(si => si.steam_price)
                 )),
@@ -244,8 +245,16 @@ const CaseAnalysis = () => {
         );
     }, [selectedRiskTypes, minPrice, maxPrice]);
 
-    const calculateDistribution = (items) => {
-        const totalItems = items.length;
+    const calculateDistribution = (items, casePrice) => {
+        // Define tier thresholds as multiples of case price
+        const priceRatioThresholds = {
+            lowTier: 0.5,     // Items below 50% of case price
+            midTier: 0.99,       // Items between 50% and 99% of case price
+            highTier: 5,      // Items between 100% and 500% of case price
+            premiumTier: 10   // Items between 500% and 1000% of case price
+            // Exotic tier: Items above 1000% of case price
+        };
+
         let distribution = {
             lowTier: 0,
             midTier: 0,
@@ -254,15 +263,18 @@ const CaseAnalysis = () => {
             exoticTier: 0
         };
 
+        // Count items in each tier based on their price ratio to case price
         items.forEach(item => {
-            const price = item.steam_items[0].steam_price / 100;
-            if (price <= priceRanges.lowTier[1]) {
+            const price = item.steam_items[0].steam_price / 100; // Convert to dollars
+            const priceRatio = price / casePrice;
+
+            if (priceRatio <= priceRatioThresholds.lowTier) {
                 distribution.lowTier++;
-            } else if (price <= priceRanges.midTier[1]) {
+            } else if (priceRatio <= priceRatioThresholds.midTier) {
                 distribution.midTier++;
-            } else if (price <= priceRanges.highTier[1]) {
+            } else if (priceRatio <= priceRatioThresholds.highTier) {
                 distribution.highTier++;
-            } else if (price <= priceRanges.premiumTier[1]) {
+            } else if (priceRatio <= priceRatioThresholds.premiumTier) {
                 distribution.premiumTier++;
             } else {
                 distribution.exoticTier++;
@@ -270,8 +282,10 @@ const CaseAnalysis = () => {
         });
 
         // Convert to percentages
+        const totalItems = items.length;
         Object.keys(distribution).forEach(key => {
-            distribution[key] = (distribution[key] / totalItems * 100).toFixed(2);
+            distribution[key] =
+                Number(((distribution[key] / totalItems) * 100).toFixed(2));
         });
 
         return distribution;
@@ -328,7 +342,7 @@ const CaseAnalysis = () => {
     };
 
     const exportCaseBreakdown = (siteName, caseName, caseData) => {
-        const distribution = calculateDistribution(caseData.items);
+        const distribution = calculateDistribution(caseData.items, caseData.price);
 
         // Headers for breakdown CSV
         const headers = [
@@ -755,6 +769,54 @@ const CaseAnalysis = () => {
                                     </ResponsiveContainer>
                                 </div>
                             </div>
+
+                            {activeSite && (
+                                <div className="bg-white rounded-lg shadow-lg p-6">
+                                    <h2 className="text-xl font-semibold mb-4">Average Item Distribution for {SITE_PROCESSORS[activeSite].name}</h2>
+                                    <div className="h-80">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={Object.entries(
+                                                        Object.values(getFilteredCases(caseAnalysis[activeSite]))
+                                                            .reduce((acc, caseData) => {
+                                                                const dist = calculateDistribution(caseData.items, caseData.price);
+                                                                Object.entries(dist).forEach(([tier, value]) => {
+                                                                    acc[tier] = (acc[tier] || 0) + value;
+                                                                });
+                                                                return acc;
+                                                            }, {})
+                                                    ).map(([key, value]) => ({
+                                                        name: key.replace(/([A-Z])/g, ' $1').trim(),
+                                                        value: value / Object.keys(getFilteredCases(caseAnalysis[activeSite])).length
+                                                    }))}
+                                                    dataKey="value"
+                                                    nameKey="name"
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    innerRadius={60}
+                                                    outerRadius={80}
+                                                    fill="#8884d8"
+                                                >
+                                                    {
+                                                        Object.entries({
+                                                            lowTier: '#22c55e',
+                                                            midTier: '#3b82f6',
+                                                            highTier: '#eab308',
+                                                            premiumTier: '#f97316',
+                                                            exoticTier: '#ef4444'
+                                                        }).map(([key, color]) => (
+                                                            <Cell key={key} fill={color} />
+                                                        ))
+                                                    }
+                                                </Pie>
+                                                <Tooltip formatter={(value) => `${value.toFixed(2)}%`} />
+                                                <Legend />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="mb-4 border-b">
@@ -799,7 +861,7 @@ const CaseAnalysis = () => {
                                     {Object.entries(getFilteredCases(caseAnalysis[activeSite]))
                                         .sort(([, a], [, b]) => b.price - a.price)
                                         .map(([filename, caseData]) => {
-                                            const distribution = calculateDistribution(caseData.items);
+                                            const distribution = calculateDistribution(caseData.items, caseData.price);
                                             return (
                                                 <tr key={filename} className="border-b">
                                                     <td className="p-2">{caseData.name}</td>
