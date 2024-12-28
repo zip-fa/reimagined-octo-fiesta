@@ -88,7 +88,7 @@ const SITE_PROCESSORS = {
                 name: data.data.crate.title,
                 price: Number(price),
                 items: items,
-                rtp: calculateRTP(items, price),
+                rtp: calculateRTP(items, price) / 100,
                 minPrice: Math.min(...items.flatMap(item =>
                     item.steam_items.map(si => si.steam_price)
                 )) / 100,
@@ -257,6 +257,96 @@ const CaseAnalysis = () => {
         });
 
         return distribution;
+    };
+
+    const exportAllCases = () => {
+        Object.entries(caseAnalysis).forEach(([siteName, cases]) => {
+            Object.entries(cases).forEach(([filename, caseData]) => {
+                const caseName = caseData.name.toLowerCase().replace(/\s+/g, '-');
+                exportCaseItems(SITE_PROCESSORS[siteName].name.toLowerCase(), caseName, caseData.items);
+                exportCaseBreakdown(SITE_PROCESSORS[siteName].name.toLowerCase(), caseName, caseData);
+            });
+        });
+    };
+
+
+// Add functions to export CSV data
+    const exportCaseItems = (siteName, caseName, items) => {
+        // Headers for items CSV
+        const headers = ['Item Name', 'Price ($)', 'Chance (%)'];
+
+        // Convert items to rows
+        const rows = items.flatMap(item =>
+            item.steam_items.map(si => [
+                si.name || 'Unknown',
+                (si.steam_price / 100).toFixed(2),
+                (si.probability).toFixed(4)
+            ])
+        );
+
+        // Combine headers and rows
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+
+        // Create and trigger download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${siteName}-${caseName}-items.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    };
+
+    const exportCaseBreakdown = (siteName, caseName, caseData) => {
+        const distribution = calculateDistribution(caseData.items);
+
+        // Headers for breakdown CSV
+        const headers = [
+            'Case Name',
+            'Price ($)',
+            'RTP (%)',
+            'Min Price ($)',
+            'Max Price ($)',
+            'Max/Price Ratio',
+            'Risk Level',
+            'Low Tier %',
+            'Mid Tier %',
+            'High Tier %',
+            'Premium %',
+            'Exotic %'
+        ];
+
+        // Create row data
+        const row = [
+            caseData.name,
+            caseData.price.toFixed(2),
+            caseData.rtp.toFixed(2),
+            caseData.minPrice.toFixed(2),
+            caseData.maxPrice.toFixed(2),
+            caseData.maxLootToPriceRatio.toFixed(2),
+            caseData.riskType,
+            distribution.lowTier,
+            distribution.midTier,
+            distribution.highTier,
+            distribution.premiumTier,
+            distribution.exoticTier
+        ];
+
+        // Combine header and row
+        const csvContent = [
+            headers.join(','),
+            row.map(cell => `"${cell}"`).join(',')
+        ].join('\n');
+
+        // Create and trigger download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${siteName}-${caseName}-breakdown.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
     };
 
     const handleFiles = useCallback(async (files) => {
@@ -500,7 +590,7 @@ const CaseAnalysis = () => {
                         </div>
                     </div>
 
-                    <div className="flex justify-end mb-6">
+                    <div className="flex justify-end gap-4 mb-6">
                         <button
                             onClick={() => exportAllSites(caseAnalysis)}
                             className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center"
@@ -519,6 +609,26 @@ const CaseAnalysis = () => {
                                 />
                             </svg>
                             Export All Data
+                        </button>
+
+                        <button
+                            onClick={() => exportAllCases()}
+                            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center"
+                        >
+                            <svg
+                                className="w-4 h-4 mr-2"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                            </svg>
+                            Export cases for AI
                         </button>
                     </div>
 
@@ -594,6 +704,7 @@ const CaseAnalysis = () => {
                                     <th className="p-2 text-left">High Tier %</th>
                                     <th className="p-2 text-left">Premium %</th>
                                     <th className="p-2 text-left">Exotic %</th>
+                                    <th className="p-2 text-left">Actions</th>
                                 </tr>
                                 </thead>
                                 <tbody>
@@ -625,6 +736,18 @@ const CaseAnalysis = () => {
                                                 <td className="p-2">{distribution.highTier}%</td>
                                                 <td className="p-2">{distribution.premiumTier}%</td>
                                                 <td className="p-2">{distribution.exoticTier}%</td>
+                                                <td className="p-2">
+                                                    <button
+                                                        onClick={() => {
+                                                            const caseName = caseData.name.toLowerCase().replace(/\s+/g, '-');
+                                                            exportCaseItems(SITE_PROCESSORS[activeSite].name.toLowerCase(), caseName, caseData.items);
+                                                            exportCaseBreakdown(SITE_PROCESSORS[activeSite].name.toLowerCase(), caseName, caseData);
+                                                        }}
+                                                        className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm"
+                                                    >
+                                                        Export
+                                                    </button>
+                                                </td>
                                             </tr>
                                         );
                                     })}
