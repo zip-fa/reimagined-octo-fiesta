@@ -2,6 +2,7 @@ import React, {useState, useCallback, useMemo} from 'react';
 import _ from 'lodash';
 import { Link } from "react-router-dom";
 import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
+import {Slider} from "./components/slider.jsx";
 
 // Add this export function after the determineRiskType function
 const exportSiteData = (siteName, cases) => {
@@ -65,6 +66,38 @@ const determineRiskType = (maxLootToPriceRatio) => {
 };
 
 const SITE_PROCESSORS = {
+    'froggy': {
+        name: 'Froggy',
+        processData: (data) => {
+            const items = data.data.crate.crateItems
+                .filter(item => !item.isJokerMode)
+                .map(item => ({
+                    steam_items: [{
+                        steam_price: item.price * 100, // Convert to cents
+                        probability: parseFloat(item.chance)
+                    }]
+                }));
+
+            const price = data.data.crate.price;
+            const maxPrice = Math.max(...items.flatMap(item =>
+                item.steam_items.map(si => si.steam_price)
+            )) / 100;
+            const maxLootToPriceRatio = maxPrice / price;
+
+            return {
+                name: data.data.crate.title,
+                price: Number(price),
+                items: items,
+                rtp: calculateRTP(items, price),
+                minPrice: Math.min(...items.flatMap(item =>
+                    item.steam_items.map(si => si.steam_price)
+                )) / 100,
+                maxPrice: maxPrice,
+                maxLootToPriceRatio: maxLootToPriceRatio,
+                riskType: determineRiskType(maxLootToPriceRatio)
+            };
+        }
+    },
     'g4skins': {
         name: 'G4Skins',
         processData: (data) => {
@@ -184,6 +217,47 @@ const CaseAnalysis = () => {
     const [processedFiles, setProcessedFiles] = useState(new Set());
     const [caseAnalysis, setCaseAnalysis] = useState({});
     const [activeSite, setActiveSite] = useState(null);
+    // Add these state variables to your component
+    const [priceRanges, setPriceRanges] = useState({
+        lowTier: [0, 1],
+        midTier: [1, 5],
+        highTier: [5, 40],
+        premiumTier: [40, 200],
+        exoticTier: [200, Infinity]
+    });
+
+    const calculateDistribution = (items) => {
+        const totalItems = items.length;
+        let distribution = {
+            lowTier: 0,
+            midTier: 0,
+            highTier: 0,
+            premiumTier: 0,
+            exoticTier: 0
+        };
+
+        items.forEach(item => {
+            const price = item.steam_items[0].steam_price / 100;
+            if (price <= priceRanges.lowTier[1]) {
+                distribution.lowTier++;
+            } else if (price <= priceRanges.midTier[1]) {
+                distribution.midTier++;
+            } else if (price <= priceRanges.highTier[1]) {
+                distribution.highTier++;
+            } else if (price <= priceRanges.premiumTier[1]) {
+                distribution.premiumTier++;
+            } else {
+                distribution.exoticTier++;
+            }
+        });
+
+        // Convert to percentages
+        Object.keys(distribution).forEach(key => {
+            distribution[key] = (distribution[key] / totalItems * 100).toFixed(2);
+        });
+
+        return distribution;
+    };
 
     const handleFiles = useCallback(async (files) => {
         const fileArray = Array.from(files);
@@ -364,6 +438,68 @@ const CaseAnalysis = () => {
 
             {Object.keys(caseAnalysis).length > 0 && (
                 <div className="bg-white rounded-lg shadow-lg p-6">
+                    <h2 className="text-xl font-semibold mb-4">Price Range Configuration</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Low Tier
+                                    ($0-${priceRanges.lowTier[1]})</label>
+                                <Slider
+                                    defaultValue={[priceRanges.lowTier[1]]}
+                                    max={5}
+                                    step={0.1}
+                                    onValueChange={(value) => setPriceRanges(prev => ({
+                                        ...prev,
+                                        lowTier: [0, value[0]],
+                                        midTier: [value[0], prev.midTier[1]]
+                                    }))}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Mid Tier
+                                    (${priceRanges.lowTier[1]}-${priceRanges.midTier[1]})</label>
+                                <Slider
+                                    defaultValue={[priceRanges.midTier[1]]}
+                                    max={10}
+                                    step={0.5}
+                                    onValueChange={(value) => setPriceRanges(prev => ({
+                                        ...prev,
+                                        midTier: [prev.lowTier[1], value[0]],
+                                        highTier: [value[0], prev.highTier[1]]
+                                    }))}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">High Tier
+                                    (${priceRanges.midTier[1]}-${priceRanges.highTier[1]})</label>
+                                <Slider
+                                    defaultValue={[priceRanges.highTier[1]]}
+                                    max={50}
+                                    step={1}
+                                    onValueChange={(value) => setPriceRanges(prev => ({
+                                        ...prev,
+                                        highTier: [prev.midTier[1], value[0]],
+                                        premiumTier: [value[0], prev.premiumTier[1]]
+                                    }))}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Premium Tier
+                                    (${priceRanges.highTier[1]}-${priceRanges.premiumTier[1]})</label>
+                                <Slider
+                                    defaultValue={[priceRanges.premiumTier[1]]}
+                                    max={500}
+                                    step={10}
+                                    onValueChange={(value) => setPriceRanges(prev => ({
+                                        ...prev,
+                                        premiumTier: [prev.highTier[1], value[0]],
+                                        exoticTier: [value[0], Infinity]
+                                    }))}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="flex justify-end mb-6">
                         <button
                             onClick={() => exportAllSites(caseAnalysis)}
@@ -453,32 +589,45 @@ const CaseAnalysis = () => {
                                     <th className="p-2 text-left">Max Price ($)</th>
                                     <th className="p-2 text-left">Max/Price Ratio</th>
                                     <th className="p-2 text-left">Risk Level</th>
+                                    <th className="p-2 text-left">Low Tier %</th>
+                                    <th className="p-2 text-left">Mid Tier %</th>
+                                    <th className="p-2 text-left">High Tier %</th>
+                                    <th className="p-2 text-left">Premium %</th>
+                                    <th className="p-2 text-left">Exotic %</th>
                                 </tr>
                                 </thead>
                                 <tbody>
                                 {Object.entries(caseAnalysis[activeSite])
                                     .sort(([, a], [, b]) => b.price - a.price)
-                                    .map(([filename, caseData]) => (
-                                        <tr key={filename} className="border-b">
-                                            <td className="p-2">{caseData.name}</td>
-                                            <td className="p-2">{caseData.price.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.rtp.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
-                                            <td className="p-2">{caseData.maxLootToPriceRatio.toFixed(2)}x</td>
-                                            <td className="p-2">
-                                                <span className={`px-2 py-1 rounded-full text-xs ${
-                                                    caseData.riskType === 'Minimal' ? 'bg-green-100 text-green-800' :
-                                                        caseData.riskType === 'Moderate' ? 'bg-blue-100 text-blue-800' :
-                                                            caseData.riskType === 'Balanced' ? 'bg-yellow-100 text-yellow-800' :
-                                                                caseData.riskType === 'Elevated' ? 'bg-orange-100 text-orange-800' :
-                                                                    'bg-red-100 text-red-800'
-                                                }`}>
-                                                    {caseData.riskType}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    .map(([filename, caseData]) => {
+                                        const distribution = calculateDistribution(caseData.items);
+                                        return (
+                                            <tr key={filename} className="border-b">
+                                                <td className="p-2">{caseData.name}</td>
+                                                <td className="p-2">{caseData.price.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.rtp.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.minPrice.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.maxPrice.toFixed(2)}</td>
+                                                <td className="p-2">{caseData.maxLootToPriceRatio.toFixed(2)}x</td>
+                                                <td className="p-2">
+                    <span className={`px-2 py-1 rounded-full text-xs ${
+                        caseData.riskType === 'Minimal' ? 'bg-green-100 text-green-800' :
+                            caseData.riskType === 'Moderate' ? 'bg-blue-100 text-blue-800' :
+                                caseData.riskType === 'Balanced' ? 'bg-yellow-100 text-yellow-800' :
+                                    caseData.riskType === 'Elevated' ? 'bg-orange-100 text-orange-800' :
+                                        'bg-red-100 text-red-800'
+                    }`}>
+                        {caseData.riskType}
+                    </span>
+                                                </td>
+                                                <td className="p-2">{distribution.lowTier}%</td>
+                                                <td className="p-2">{distribution.midTier}%</td>
+                                                <td className="p-2">{distribution.highTier}%</td>
+                                                <td className="p-2">{distribution.premiumTier}%</td>
+                                                <td className="p-2">{distribution.exoticTier}%</td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
