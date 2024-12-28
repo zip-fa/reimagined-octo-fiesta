@@ -6,36 +6,6 @@ import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxi
 import {Slider} from "./components/slider.jsx";
 
 // Add this export function after the determineRiskType function
-const exportSiteData = (siteName, cases) => {
-    // Define CSV headers
-    const headers = ['Case Name', 'Price ($)', 'RTP (%)', 'Min Price ($)', 'Max Price ($)', 'Max/Price Ratio', 'Risk Level'];
-
-    // Convert cases data to CSV rows
-    const rows = Object.values(cases).map(caseData => [
-        caseData.name,
-        caseData.price.toFixed(2),
-        caseData.rtp.toFixed(2),
-        caseData.minPrice.toFixed(2),
-        caseData.maxPrice.toFixed(2),
-        caseData.maxLootToPriceRatio.toFixed(2),
-        caseData.riskType
-    ]);
-
-    // Combine headers and rows
-    const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    // Create and trigger download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${siteName}-parsed.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-};
-
 const calculateRTP = (items, casePrice) => {
     let totalProbability = 0;
     let expectedValue = 0;
@@ -308,6 +278,52 @@ const CaseAnalysis = () => {
                 exportCaseBreakdown(SITE_PROCESSORS[siteName].name.toLowerCase(), caseName, caseData);
             });
         });
+    };
+    const exportSiteData = (siteName, cases) => {
+        const headers = [
+            'Case Name',
+            'Price ($)',
+            'RTP (%)',
+            'Min Price ($)',
+            'Max Price ($)',
+            'Max/Price Ratio',
+            'Risk Level',
+            'Low Tier %',
+            'Mid Tier %',
+            'High Tier %',
+            'Premium %',
+            'Exotic %'
+        ];
+
+        const rows = Object.values(cases).map(caseData => {
+            const distribution = calculateDistribution(caseData.items, caseData.price);
+            return [
+                caseData.name,
+                caseData.price.toFixed(2),
+                caseData.rtp.toFixed(2),
+                caseData.minPrice.toFixed(2),
+                caseData.maxPrice.toFixed(2),
+                caseData.maxLootToPriceRatio.toFixed(2),
+                caseData.riskType,
+                distribution.lowTier,
+                distribution.midTier,
+                distribution.highTier,
+                distribution.premiumTier,
+                distribution.exoticTier
+            ];
+        });
+
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${siteName}-parsed.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
     };
 
 
