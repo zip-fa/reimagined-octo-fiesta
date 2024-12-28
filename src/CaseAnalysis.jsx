@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import {Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell} from "recharts";
 
 import {Slider} from "./components/slider.jsx";
-import {SITE_PROCESSORS} from "./lib/site-processors.js";
+import {calculateDistribution, SITE_PROCESSORS} from "./lib/site-processors.js";
 
 const CaseAnalysis = () => {
     const [dragActive, setDragActive] = useState(false);
@@ -44,52 +44,6 @@ const CaseAnalysis = () => {
             )
         );
     }, [selectedRiskTypes, minPrice, maxPrice]);
-
-    const calculateDistribution = (items, casePrice) => {
-        // Define tier thresholds as multiples of case price
-        const priceRatioThresholds = {
-            lowTier: 0.5,     // Items below 50% of case price
-            midTier: 0.99,       // Items between 50% and 99% of case price
-            highTier: 5,      // Items between 100% and 500% of case price
-            premiumTier: 10   // Items between 500% and 1000% of case price
-            // Exotic tier: Items above 1000% of case price
-        };
-
-        let distribution = {
-            lowTier: 0,
-            midTier: 0,
-            highTier: 0,
-            premiumTier: 0,
-            exoticTier: 0
-        };
-
-        // Count items in each tier based on their price ratio to case price
-        items.forEach(item => {
-            const price = item.steam_items[0].steam_price / 100; // Convert to dollars
-            const priceRatio = price / casePrice;
-
-            if (priceRatio <= priceRatioThresholds.lowTier) {
-                distribution.lowTier++;
-            } else if (priceRatio <= priceRatioThresholds.midTier) {
-                distribution.midTier++;
-            } else if (priceRatio <= priceRatioThresholds.highTier) {
-                distribution.highTier++;
-            } else if (priceRatio <= priceRatioThresholds.premiumTier) {
-                distribution.premiumTier++;
-            } else {
-                distribution.exoticTier++;
-            }
-        });
-
-        // Convert to percentages
-        const totalItems = items.length;
-        Object.keys(distribution).forEach(key => {
-            distribution[key] =
-                Number(((distribution[key] / totalItems) * 100).toFixed(2));
-        });
-
-        return distribution;
-    };
 
 // Add this export all function
     const exportAllSites = (caseAnalysis) => {

@@ -1,19 +1,26 @@
 import React, { useState, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend } from 'recharts';
 import {Link} from "react-router-dom";
-import {calculateRTP, SITE_PROCESSORS} from "./lib/site-processors.js";
+import {calculateDistribution, calculateRTP, SITE_PROCESSORS} from "./lib/site-processors.js";
+import Papa from 'papaparse';
 
 // Seeded random function
 const seededRandom = (function() {
     let seed = 42;
-    return function() {
+    const random = function() {
         seed = (seed * 16807) % 2147483647;
         return (seed - 1) / 2147483646;
     };
+    random.reset = function() {
+        seed = 42;
+    };
+    return random;
 })();
 
 // Original function without modifications
 function generateItemsOriginal(casePrice, rtp, minPrice, maxPrice, count) {
+    seededRandom.reset();
+
     const targetEV = casePrice * (rtp / 100);
     const items = [];
 
@@ -60,15 +67,17 @@ function generateItemsOriginal(casePrice, rtp, minPrice, maxPrice, count) {
 }
 
 // New function with improved distribution
-function generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count) {
+function generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count, customDistribution) {
+    seededRandom.reset();
+
     const targetEV = casePrice * (rtp / 100);
     const items = [];
 
     const distribution = {
-        lowTier: Math.floor(count * 0.3),
-        midTier: Math.floor(count * 0.2),
-        highTier: Math.floor(count * 0.3),
-        premiumTier: Math.floor(count * 0.15)
+        lowTier: Math.floor(count * customDistribution.lowTier / 100),
+        midTier: Math.floor(count * customDistribution.midTier / 100),
+        highTier: Math.floor(count * customDistribution.highTier / 100),
+        premiumTier: Math.floor(count * customDistribution.premiumTier / 100)
     };
     distribution.exoticTier = count - Object.values(distribution).reduce((a,b) => a+b, 0);
 
@@ -144,47 +153,10 @@ function generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count) {
     return items.sort((a, b) => b.price - a.price);
 }
 
-function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = false) {
+function generateItems(casePrice, rtp, minPrice, maxPrice, count, useImproved = false, customDistribution) {
     return useImproved
-        ? generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count)
+        ? generateItemsImproved(casePrice, rtp, minPrice, maxPrice, count, customDistribution)
         : generateItemsOriginal(casePrice, rtp, minPrice, maxPrice, count);
-}
-function calculateDistribution(items, casePrice) {
-    const thresholds = {
-        lowTier: 0.5,
-        midTier: 0.99,
-        highTier: 5,
-        premiumTier: 10
-    };
-
-    const distribution = {
-        lowTier: 0,
-        midTier: 0,
-        highTier: 0,
-        premiumTier: 0,
-        exoticTier: 0
-    };
-
-    items.forEach(item => {
-        const priceRatio = item.price / casePrice;
-        if (priceRatio <= thresholds.lowTier) {
-            distribution.lowTier++;
-        } else if (priceRatio <= thresholds.midTier) {
-            distribution.midTier++;
-        } else if (priceRatio <= thresholds.highTier) {
-            distribution.highTier++;
-        } else if (priceRatio <= thresholds.premiumTier) {
-            distribution.premiumTier++;
-        } else {
-            distribution.exoticTier++;
-        }
-    });
-
-    Object.keys(distribution).forEach(key => {
-        distribution[key] = Number(((distribution[key] / items.length) * 100).toFixed(2));
-    });
-
-    return distribution;
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
@@ -196,10 +168,29 @@ export default function RtpGenerator() {
         rtp: 90,
         minPrice: 0.1,
         maxPrice: 100,
-        itemsCount: 20
+        itemsCount: 20,
+        distribution: {
+            lowTier: 24,
+            midTier: 14,
+            highTier: 35,
+            premiumTier: 11,
+            exoticTier: 15
+        }
     });
+    const [savedResults, setSavedResults] = useState([]);
     const [uploadedCase, setUploadedCase] = useState(null);
     const [dragActive, setDragActive] = useState(false);
+
+    const handleDistributionChange = (tier, value) => {
+        const newDist = { ...inputs.distribution, [tier]: value };
+        setInputs(prev => ({...prev, distribution: newDist}));
+        // const total = Object.values(newDist).reduce((a, b) => a + b, 0);
+
+        // if (total <= 100) {
+        //     newDist.exoticTier = 100 - (total - newDist.exoticTier);
+        //     setInputs(prev => ({...prev, distribution: newDist}));
+        // }
+    };
 
     const handleDrag = (e) => {
         e.preventDefault();
@@ -230,6 +221,16 @@ export default function RtpGenerator() {
                     }));
 
                     setUploadedCase(processedCase);
+
+                    const dist = calculateDistribution(processedCase.items, processedCase.price);
+
+                    setSavedResults(prev => [...prev, {
+                        caseName: processedCase.name,
+                        projectName: siteName,
+                        prodDist: dist,
+                        betterDist: inputs.distribution
+                    }]);
+
                     setInputs(prev => ({
                         ...prev,
                         rtp,
@@ -243,6 +244,41 @@ export default function RtpGenerator() {
                 console.error('Error processing file:', err);
             }
         }
+    };
+
+    const exportToCsv = () => {
+        const headers = ['Case Name', 'Project Name',
+            'Prod Low Tier %', 'Prod Mid Tier %', 'Prod High Tier %', 'Prod Premium Tier %', 'Prod Exotic Tier %',
+            'Better Low Tier %', 'Better Mid Tier %', 'Better High Tier %', 'Better Premium Tier %', 'Better Exotic Tier %'
+        ];
+
+        const rows = savedResults.map(result => [
+            result.caseName,
+            result.projectName,
+            result.prodDist.lowTier,
+            result.prodDist.midTier,
+            result.prodDist.highTier,
+            result.prodDist.premiumTier,
+            result.prodDist.exoticTier,
+            result.betterDist.lowTier,
+            result.betterDist.midTier,
+            result.betterDist.highTier,
+            result.betterDist.premiumTier,
+            result.betterDist.exoticTier
+        ]);
+
+        const csvContent = Papa.unparse({
+            fields: headers,
+            data: rows
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'case-analysis.csv';
+        a.click();
+        window.URL.revokeObjectURL(url);
     };
 
     const results = useMemo(() => {
@@ -261,7 +297,8 @@ export default function RtpGenerator() {
             inputs.minPrice,
             inputs.maxPrice,
             inputs.itemsCount,
-            true
+            true,
+            inputs.distribution
         );
 
         return {
@@ -313,6 +350,26 @@ export default function RtpGenerator() {
                 <p className="mb-4">Drop a case file here to compare with generated distributions</p>
             </div>
 
+            <div className="mb-8">
+                <h3 className="font-bold mb-4">Distribution Settings</h3>
+                <div className="space-y-4">
+                    {Object.entries(inputs.distribution).map(([tier, value]) => (
+                        <div key={tier} className="flex items-center gap-4">
+                            <span className="w-24">{tier}</span>
+                            <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={value}
+                                onChange={(e) => handleDistributionChange(tier, parseInt(e.target.value))}
+                                className="flex-1"
+                            />
+                            <span className="w-12">{value}%</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div>
                     <label className="block text-sm font-medium">Case Price ($)</label>
@@ -362,22 +419,119 @@ export default function RtpGenerator() {
             </div>
 
             <div className="grid grid-cols-3 gap-4">
-            <div className="p-4">
-                        <h3 className="font-bold mb-2">Сейчас в проде</h3>
+                <div className="p-4">
+                    <h3 className="font-bold mb-2">Сейчас в проде (RTP {calculateRTP(results.original.items, inputs.casePrice).toFixed(3)}%)</h3>
+                    <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={Object.entries(results.original.distribution).map(([name, value]) => ({
+                                        name,
+                                        value
+                                    }))}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    animationDuration={0}
+                                    label
+                                >
+                                    {Object.keys(results.original.distribution).map((_, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
+                                    ))}
+                                </Pie>
+                                <Legend/>
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <div className="mt-4 overflow-x-auto">
+                        <table className="min-w-full">
+                            <thead>
+                            <tr>
+                                <th className="px-4 py-2">Price ($)</th>
+                                <th className="px-4 py-2">Chance (%)</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {results.original.items.map((item, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
+                                    <td className="px-4 py-2">{item.price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">{item.chance.toFixed(3)}</td>
+                                </tr>
+                            ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div className="p-4">
+                    <h3 className="font-bold mb-2">Улучшенная версия (RTP {calculateRTP(results.improved.items, inputs.casePrice).toFixed(3)}%)</h3>
+                    <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={Object.entries(results.improved.distribution).map(([name, value]) => ({
+                                        name,
+                                        value
+                                    }))}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    animationDuration={0}
+                                    label
+                                >
+                                    {Object.keys(results.improved.distribution).map((_, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
+                                    ))}
+                                </Pie>
+                                <Legend/>
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <div className="mt-4 overflow-x-auto">
+                        <table className="min-w-full">
+                            <thead>
+                            <tr>
+                                <th className="px-4 py-2">Price ($)</th>
+                                <th className="px-4 py-2">Chance (%)</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {results.improved.items.map((item, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
+                                    <td className="px-4 py-2">{item.price.toFixed(2)}</td>
+                                    <td className="px-4 py-2">{item.chance.toFixed(3)}</td>
+                                </tr>
+                            ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {uploadedCase && (
+                    <div className="p-4">
+                        <h3 className="font-bold mb-2">{uploadedCase.name}</h3>
                         <div className="h-80">
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
-                                        data={Object.entries(results.original.distribution).map(([name, value]) => ({
-                                            name,
-                                            value
-                                        }))}
+                                        data={Object.entries(calculateDistribution(uploadedCase.items, uploadedCase.price))
+                                            .map(([name, value]) => ({
+                                                name,
+                                                value
+                                            }))}
                                         dataKey="value"
                                         nameKey="name"
                                         cx="50%"
                                         cy="50%"
                                         innerRadius={60}
                                         outerRadius={80}
+                                        animationDuration={0}
                                         label
                                     >
                                         {Object.keys(results.original.distribution).map((_, index) => (
@@ -397,7 +551,7 @@ export default function RtpGenerator() {
                                 </tr>
                                 </thead>
                                 <tbody>
-                                {results.original.items.map((item, idx) => (
+                                {uploadedCase.items.map((item, idx) => (
                                     <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
                                         <td className="px-4 py-2">{item.price.toFixed(2)}</td>
                                         <td className="px-4 py-2">{item.chance.toFixed(3)}</td>
@@ -407,102 +561,60 @@ export default function RtpGenerator() {
                             </table>
                         </div>
                     </div>
-
-            <div className="p-4">
-                        <h3 className="font-bold mb-2">Улучшенная версия</h3>
-                        <div className="h-80">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={Object.entries(results.improved.distribution).map(([name, value]) => ({
-                                            name,
-                                            value
-                                        }))}
-                                        dataKey="value"
-                                        nameKey="name"
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={60}
-                                        outerRadius={80}
-                                        label
-                                    >
-                                        {Object.keys(results.improved.distribution).map((_, index) => (
-                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
-                                        ))}
-                                    </Pie>
-                                    <Legend/>
-                                </PieChart>
-                            </ResponsiveContainer>
-                        </div>
-                        <div className="mt-4 overflow-x-auto">
-                            <table className="min-w-full">
-                                <thead>
-                                <tr>
-                                    <th className="px-4 py-2">Price ($)</th>
-                                    <th className="px-4 py-2">Chance (%)</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                {results.improved.items.map((item, idx) => (
-                                    <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
-                                        <td className="px-4 py-2">{item.price.toFixed(2)}</td>
-                                        <td className="px-4 py-2">{item.chance.toFixed(3)}</td>
-                                    </tr>
-                                ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                {uploadedCase && (
-                <div className="p-4">
-                            <h3 className="font-bold mb-2">{uploadedCase.name} from competitor</h3>
-                            <div className="h-80">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={Object.entries(calculateDistribution(uploadedCase.items, uploadedCase.price))
-                                                .map(([name, value]) => ({
-                                                    name,
-                                                    value
-                                                }))}
-                                            dataKey="value"
-                                            nameKey="name"
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={60}
-                                            outerRadius={80}
-                                            label
-                                        >
-                                            {Object.keys(results.original.distribution).map((_, index) => (
-                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
-                                            ))}
-                                        </Pie>
-                                        <Legend/>
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div className="mt-4 overflow-x-auto">
-                                <table className="min-w-full">
-                                    <thead>
-                                    <tr>
-                                        <th className="px-4 py-2">Price ($)</th>
-                                        <th className="px-4 py-2">Chance (%)</th>
-                                    </tr>
-                                    </thead>
-                                    <tbody>
-                                    {uploadedCase.items.map((item, idx) => (
-                                        <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
-                                            <td className="px-4 py-2">{item.price.toFixed(2)}</td>
-                                            <td className="px-4 py-2">{item.chance.toFixed(3)}</td>
-                                        </tr>
-                                    ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
                 )}
             </div>
+
+            {savedResults.length > 0 && (
+                <div className="mt-8">
+                    <div className="flex justify-between mb-4">
+                        <h3 className="font-bold">Saved Results</h3>
+                        <button
+                            onClick={exportToCsv}
+                            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                        >
+                            Export as CSV
+                        </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full">
+                            <thead>
+                            <tr>
+                                <th className="px-4 py-2">Case Name</th>
+                                <th className="px-4 py-2">Project Name</th>
+                                <th className="px-4 py-2">Prod Low Tier %</th>
+                                <th className="px-4 py-2">Prod Mid Tier %</th>
+                                <th className="px-4 py-2">Prod High Tier %</th>
+                                <th className="px-4 py-2">Prod Premium Tier %</th>
+                                <th className="px-4 py-2">Prod Exotic Tier %</th>
+                                <th className="px-4 py-2">Better Low Tier %</th>
+                                <th className="px-4 py-2">Better Mid Tier %</th>
+                                <th className="px-4 py-2">Better High Tier %</th>
+                                <th className="px-4 py-2">Better Premium Tier %</th>
+                                <th className="px-4 py-2">Better Exotic Tier %</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {savedResults.map((result, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? 'bg-gray-50' : ''}>
+                                    <td className="px-4 py-2">{result.caseName}</td>
+                                    <td className="px-4 py-2">{result.projectName}</td>
+                                    <td className="px-4 py-2">{result.prodDist.lowTier}</td>
+                                    <td className="px-4 py-2">{result.prodDist.midTier}</td>
+                                    <td className="px-4 py-2">{result.prodDist.highTier}</td>
+                                    <td className="px-4 py-2">{result.prodDist.premiumTier}</td>
+                                    <td className="px-4 py-2">{result.prodDist.exoticTier}</td>
+                                    <td className="px-4 py-2">{result.betterDist.lowTier}</td>
+                                    <td className="px-4 py-2">{result.betterDist.midTier}</td>
+                                    <td className="px-4 py-2">{result.betterDist.highTier}</td>
+                                    <td className="px-4 py-2">{result.betterDist.premiumTier}</td>
+                                    <td className="px-4 py-2">{result.betterDist.exoticTier}</td>
+                                </tr>
+                            ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
